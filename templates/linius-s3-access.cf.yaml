@@ -1,0 +1,33 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: This template deploys an S3 bucket that grants access to Linius Technologies
+
+Parameters:
+  BucketName:
+    Description: The name of the bucket, must be globally unique
+    Type: String
+    Default: linius-content-bucket
+
+Conditions:
+  CreateDefaultBucket: !Equals [!Ref BucketName, "linius-content-bucket"]
+
+Resources:
+  LambdaS3Bucket:
+    Type: 'AWS::S3::Bucket'
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !If [CreateDefaultBucket, !Sub "linius-content-bucket-${AWS::AccountId}", !Ref BucketName]
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: 'AES256'
+      VersioningConfiguration:
+        Status: Enabled
+      Tags:
+        - Key: "Name"
+          Value: "Linius remote access bucket"
