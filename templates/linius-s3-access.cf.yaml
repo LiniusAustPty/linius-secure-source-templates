@@ -12,9 +12,9 @@ Conditions:
   CreateDefaultBucket: !Equals [!Ref BucketName, "linius-content-bucket"]
 
 Resources:
-  LambdaS3Bucket:
+  LiniusS3Bucket:
     Type: 'AWS::S3::Bucket'
-    DeletionPolicy: Retain
+    # DeletionPolicy: Retain
     Properties:
       BucketName: !If [CreateDefaultBucket, !Sub "linius-content-bucket-${AWS::AccountId}", !Ref BucketName]
       PublicAccessBlockConfiguration:
@@ -31,3 +31,31 @@ Resources:
       Tags:
         - Key: "Name"
           Value: "Linius remote access bucket"
+
+  LiniusBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref LiniusS3Bucket
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action:
+              - 's3:GetObject'
+              - 's3:ListBucket'
+            Effect: Allow
+            Resource:
+              - !Sub "${LiniusS3Bucket.Arn}"
+              - !Sub "${LiniusS3Bucket.Arn}/*"
+            Principal:
+              AWS:
+                - 115730434971
+                - 921688172186
+                - 333292143706
+                - 774774188620
+
+Outputs:
+  S3Bucket:
+    Description: S3 Bucket ARN
+    Value: !GetAtt LiniusS3Bucket.Arn
+    Export:
+      Name: LiniusS3Bucket
