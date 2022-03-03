@@ -7,6 +7,10 @@ Parameters:
     Description: The name of the bucket, must be globally unique
     Type: String
     Default: linius-content-bucket
+  LambdaName:
+    Description: The name of the Lambda function
+    Type: String
+    Default: linius-parser-function
 
 Conditions:
   CreateDefaultBucket: !Equals [!Ref BucketName, "linius-content-bucket"]
@@ -14,7 +18,7 @@ Conditions:
 Resources:
   LiniusS3Bucket:
     Type: 'AWS::S3::Bucket'
-    # DeletionPolicy: Retain
+    DeletionPolicy: Retain
     Properties:
       BucketName: !If [CreateDefaultBucket, !Sub "linius-content-bucket-${AWS::AccountId}", !Ref BucketName]
       PublicAccessBlockConfiguration:
@@ -28,10 +32,13 @@ Resources:
               SSEAlgorithm: 'AES256'
       VersioningConfiguration:
         Status: Enabled
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Function: !GetAtt LiniusS3ProcessorLambda.Arn
+            Event: "s3:ObjectCreated:*"
       Tags:
         - Key: "Name"
           Value: "Linius remote access bucket"
-
   LiniusBucketPolicy:
     Type: AWS::S3::BucketPolicy
     Properties:
@@ -52,6 +59,103 @@ Resources:
                 - 921688172186
                 - 333292143706
                 - 774774188620
+  LiniusS3ProcessorLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Ref LambdaName
+      Runtime: python3.7
+      Role: !GetAtt LambdaRole.Arn
+      Handler: index.lambda_handler
+      Code:
+        ZipFile: |
+          import json
+          import urllib.parse
+          import boto3, botocore
+
+          s3 = boto3.client('s3')
+
+          def lambda_handler(event, context):
+              #print("Received event: " + json.dumps(event, indent=2))
+
+              # Get the object from the event and show its content type
+              bucket = event['Records'][0]['s3']['bucket']['name']
+              key = urllib.parse.unquote_plus(event['Records'][0]['s3']['object']['key'], encoding='utf-8')
+              try:
+                  response = s3.get_object(Bucket=bucket, Key=key)
+              except Exception as error:
+                  print('Error Message: {}'.format(error.response['Error']['Message']))
+                  raise error
+              if key.find(' ') != -1:
+                  print('Renaming "' + key + '" to "' + key.replace(' ', '_') + '"')
+                  copy_source = {'Bucket': bucket, 'Key': key}
+                  if response['ContentLength'] <= (25 * 1024 * 1024): # 25 MB -> bytes ContentLength - Size of the body in bytes
+                      try:
+                          s3.copy_object(CopySource = copy_source, Bucket = bucket, Key = key.replace(' ', '_'))
+                      except botocore.exceptions.ClientError as error:
+                          print('Error Message: {}'.format(error.response['Error']['Message']))
+                          raise error
+                  else:
+                      try:
+                          s3.meta.client.copy(copy_source, bucket, key.replace(' ', '_')) # Uses multi-part upload if needed
+                      except botocore.exceptions.ClientError as error:
+                          print('Error Message: {}'.format(error.response['Error']['Message']))
+                          raise error
+                  # Delete the old key
+                  try:
+                      s3.delete_object(Bucket=bucket, Key=key) 
+                  except botocore.exceptions.ClientError as error:
+                      print('Error Message: {}'.format(error.response['Error']['Message']))
+                      raise error
+      Description: This function ensures that filenames work with Linius processes.
+  LambdaPolicy:
+    Type: AWS::Lambda::Permission
+    Properties: 
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref LiniusS3ProcessorLambda
+      Principal: s3.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+      SourceArn: !If [CreateDefaultBucket, !Sub "arn:aws:s3:::linius-content-bucket-${AWS::AccountId}", !Sub "arn:aws:s3:::${BucketName}"]
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      Policies:
+        - PolicyName: CloudwatchPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub "${Logs.Arn}"
+        - PolicyName: S3Policy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:DeleteObject
+                Resource:
+                  - !If [CreateDefaultBucket, !Sub "arn:aws:s3:::linius-content-bucket-${AWS::AccountId}", !Sub "arn:aws:s3:::${BucketName}"]
+                  - !If [CreateDefaultBucket, !Sub "arn:aws:s3:::linius-content-bucket-${AWS::AccountId}/*", !Sub "arn:aws:s3:::${BucketName}/*"]
+  Logs:
+    Type: AWS::Logs::LogGroup
+    Properties: 
+      LogGroupName: !Sub "/aws/lambda/${LambdaName}"
+      RetentionInDays: 14
 
 Outputs:
   S3Bucket:
