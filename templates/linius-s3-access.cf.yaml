@@ -11,6 +11,9 @@ Parameters:
     Description: The name of the Lambda function
     Type: String
     Default: linius-parser-function
+  TenantId:
+    Description: The TenantId given after signing up to Linius
+    Type: String
 
 Conditions:
   CreateDefaultBucket: !Equals [!Ref BucketName, "linius-content-bucket"]
@@ -19,6 +22,7 @@ Resources:
   LiniusS3Bucket:
     Type: 'AWS::S3::Bucket'
     DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       BucketName: !If [CreateDefaultBucket, !Sub "linius-content-bucket-${AWS::AccountId}", !Ref BucketName]
       PublicAccessBlockConfiguration:
@@ -54,11 +58,7 @@ Resources:
               - !Sub "${LiniusS3Bucket.Arn}"
               - !Sub "${LiniusS3Bucket.Arn}/*"
             Principal:
-              AWS:
-                - 115730434971
-                - 921688172186
-                - 333292143706
-                - 774774188620
+              AWS: !Sub 'arn:aws:iam::115730434971:role/prod-secure-${TenantId}'
   LiniusS3ProcessorLambda:
     Type: AWS::Lambda::Function
     Properties:
