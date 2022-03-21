@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: "2010-09-09"
 
-Description: This template deploys an S3 bucket that grants access to Linius Technologies
+Description: This template deploys an S3 bucket with a Cloudfront distribution that grants access to Linius Technologies
 
 Parameters:
   BucketName:
@@ -14,17 +14,74 @@ Parameters:
   TenantId:
     Description: The TenantId given after signing up to Linius
     Type: String
+  PublicKeyId:
+    Description: The ID of the unique public RSA key given after signing up to Linius
+    Type: String
 
 Conditions:
   CreateDefaultBucket: !Equals [!Ref BucketName, "linius-content-bucket"]
 
 Resources:
+  LiniusCloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Origins:
+        - DomainName: !If [CreateDefaultBucket, !Sub "linius-content-bucket-${AWS::AccountId}.s3.amazonaws.com", !Sub "${BucketName}.s3.amazonaws.com"]
+          Id: S3-private-bucket
+          S3OriginConfig:
+            OriginAccessIdentity: !Sub "origin-access-identity/cloudfront/${CloudFrontOriginIdentity}"
+        Enabled: true
+        Comment: Some comment
+        DefaultRootObject: index.html
+        # Logging:
+        #   IncludeCookies: 'false'
+        #   Bucket: mylogs.s3.amazonaws.com
+        #   Prefix: myprefix
+        # Aliases:
+        #   - mysite.example.com
+        #   - yoursite.example.com
+        DefaultCacheBehavior:
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          TargetOriginId: S3-private-bucket
+          ForwardedValues:
+            QueryString: false
+            Cookies:
+              Forward: none
+          TrustedKeyGroups:
+            - !Ref LiniusKeyGroup
+          ViewerProtocolPolicy: redirect-to-https
+        PriceClass: PriceClass_All
+        Restrictions:
+          GeoRestriction:
+            RestrictionType: blacklist
+            Locations:
+              - RU
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+  CloudFrontOriginIdentity:
+    Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+    Properties:
+      CloudFrontOriginAccessIdentityConfig:
+        Comment: 'origin identity'
+  LiniusKeyGroup:
+    Type: AWS::CloudFront::KeyGroup
+    Properties: 
+      KeyGroupConfig: 
+          Comment: "Linius key group for signed URLs"
+          Items: 
+            - !Ref PublicKeyId
+          Name: "linius-public-keygroup"
   LiniusS3Bucket:
     Type: 'AWS::S3::Bucket'
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
     Properties:
       BucketName: !If [CreateDefaultBucket, !Sub "linius-content-bucket-${AWS::AccountId}", !Ref BucketName]
+      AccessControl: Private
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true
@@ -50,6 +107,11 @@ Resources:
       PolicyDocument:
         Version: 2012-10-17
         Statement:
+          - Action: 's3:GetObject'
+            Effect: Allow 
+            Resource: !Sub "${LiniusS3Bucket.Arn}/*"
+            Principal:
+              AWS: !Sub 'arn:aws:iam::cloudfront:user/CloudFront Origin Access Identity ${CloudFrontOriginIdentity}'
           - Action:
               - 's3:GetObject'
               - 's3:ListBucket'
